@@ -17,27 +17,27 @@ GRAPH.add_vertex_constraint("module", "name")
 SEEN = set()
 
 
-def map_filename_from_module(module, parent):
+def map_filename_from_module(obj, parent):
     try:
-        filename = inspect.getsourcefile(module)
+        filename = inspect.getsourcefile(obj)
         if filename:
             parent_file = GRAPH.get_or_create_vertex("file", name=filename)
             GRAPH.get_or_create_edge(parent, "found-in", parent_file)
-            logging.debug("(%s)-[:found-in]->(%s)", filename, module)
+            logging.debug("(%s)-[:found-in]->(%s)", filename, obj.__name__)
     except TypeError:
-        logging.warn("Failed to get the file for %s", module)
+        logging.warn("Failed to get the file for %s", obj.__name__)
 
 
-def map_functions_from_module(module, parent):
+def map_functions_from_module(obj, parent):
     # get all the functions in the module
-    for fname, func in inspect.getmembers(module, inspect.isfunction):
+    for fname, func in inspect.getmembers(obj, inspect.isfunction):
         fnode = GRAPH.get_or_create_vertex("function", name=fname)
         GRAPH.get_or_create_edge(parent, "has-function", fnode)
 
 
-def map_classes_from_module(module, parent):
+def map_classes_from_module(obj, parent):
     # get all the classes in the module
-    for cname, cls in inspect.getmembers(module, inspect.isclass):
+    for cname, cls in inspect.getmembers(obj, inspect.isclass):
         cnode = GRAPH.get_or_create_vertex("class", name=cname)
         GRAPH.get_or_create_edge(parent, "has-class", cnode)
         last = cnode
@@ -55,14 +55,15 @@ def map_classes_from_module(module, parent):
             logging.exception("Skipping due to an import error")
 
 
-def build_dep(module, parent):
+def build_dep(obj, parent):
     previous = parent
 
-    for name, module in inspect.getmembers(module, inspect.ismodule):
+    for name, module in inspect.getmembers(obj, inspect.ismodule):
 
         # avoid loops
         if module in SEEN:
             continue
+
         SEEN.add(module)
 
         parent = GRAPH.get_or_create_vertex("module", name=name)
@@ -73,18 +74,18 @@ def build_dep(module, parent):
             "(%s)-[:comes-from]->(%s)", name, previous.properties["name"]
         )
 
-        map_filename_from_module(module, parent)
-        map_functions_from_module(module, parent)
-        map_classes_from_module(module, parent)
-        build_dep(module, parent)
+        map_filename_from_module(obj, parent)
+        map_functions_from_module(obj, parent)
+        map_classes_from_module(obj, parent)
+        build_dep(obj, parent)
 
 
-def scrape(module):
-    logging.info("Scrapping %r", module)
+def scrape(obj):
+    logging.info("Scrapping %r", obj)
     try:
         build_dep(
-            module,
-            GRAPH.get_or_create_vertex("module", name=module.__name__)
+            obj,
+            GRAPH.get_or_create_vertex("module", name=obj.__name__)
         )
     except Exception:
         logging.exception("Hmmm, seems like something went wrong !")
