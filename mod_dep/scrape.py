@@ -1,13 +1,21 @@
 """
 Find all interesting information for a given installed module.
 """
-import argparse
 import inspect
-import importlib
 import logging
 from ruruki.graphs import Graph
 from ruruki_eye.server import run
 
+
+__all__ = [
+    "scrape",
+    "map_filename",
+    "map_functions",
+    "map_method",
+    "map_classes",
+    "map_modules",
+    "run_server",
+]
 
 GRAPH = Graph()
 GRAPH.add_vertex_constraint("class", "name")
@@ -15,7 +23,6 @@ GRAPH.add_vertex_constraint("method", "name")
 GRAPH.add_vertex_constraint("file", "name")
 GRAPH.add_vertex_constraint("function", "name")
 GRAPH.add_vertex_constraint("module", "name")
-
 
 SEEN = set()
 
@@ -190,62 +197,3 @@ def run_server(address="0.0.0.0", port=8000):
     :type port: :class:`int`
     """
     run(address, port, False, GRAPH)
-
-
-def main():
-    """
-    Command line main run.
-    """
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "module",
-        type=importlib.import_module,
-        help="Importable module to inspect.",
-    )
-
-    parser.add_argument(
-        "--address",
-        default="0.0.0.0",
-        help="Address to bind to."
-    )
-
-    parser.add_argument(
-        "--port",
-        default=8000,
-        type=int,
-        help="Port for ruruki-eye to listen on."
-    )
-
-    parser.add_argument(
-        "--level",
-        default="info",
-        choices=["info", "warn", "error", "debug"],
-        help="Logging level."
-    )
-
-    parser.add_argument(
-        "--logfile",
-        help="Send logs to a file. Default is to log to stdout."
-    )
-
-    ns = parser.parse_args()
-
-    levels = {
-        "info": logging.INFO,
-        "warn": logging.WARNING,
-        "error": logging.ERROR,
-        "debug": logging.DEBUG,
-    }
-
-    logging.basicConfig(
-        filename=ns.logfile,
-        level=levels.get(ns.level, logging.INFO)
-    )
-
-    scrape(ns.module)
-    run_server(ns.address, ns.port)
-
-
-if __name__ == "__main__":
-    main()

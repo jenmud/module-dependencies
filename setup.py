@@ -3,7 +3,7 @@ import os.path
 from setuptools import setup, find_packages
 
 setup(
-    name="module-dependencies",
+    name="mod_dep",
     version="1.0.0",
     author="Jenda Mudron",
     author_email="jenmud@gmail.com",
@@ -28,4 +28,9 @@ setup(
     install_requires=[
         "ruruki-eye",
     ],
+    entry_points={
+        'console_scripts': [
+            'gmd = mod_dep.__main__:main'
+        ]
+    },
 )
