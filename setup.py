@@ -30,7 +30,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'funnel-web = mod_dep.__main__:main'
+            'funnel-web = funnel_web.__main__:main'
         ]
     },
 )

@@ -4,7 +4,7 @@ Scrapping from command line.
 import argparse
 import importlib
 import logging
-from mod_dep.scrape import scrape, run_server
+from funnel_web.scrape import scrape, run_server
 
 
 def main():
