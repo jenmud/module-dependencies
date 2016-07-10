@@ -2,9 +2,8 @@ import argparse
 import inspect
 import importlib
 import logging
-import ruruki
-
 from ruruki.graphs import Graph
+from ruruki_eye.server import run
 
 
 GRAPH = Graph()
@@ -20,7 +19,7 @@ SEEN = set()
 
 def map_filename_from_module(module, parent):
     try:
-        filename = inspect.getfile(module)
+        filename = inspect.getsourcefile(module)
         if filename:
             parent_file = GRAPH.get_or_create_vertex("file", name=filename)
             GRAPH.get_or_create_edge(parent, "found-in", parent_file)
@@ -74,7 +73,6 @@ def build_dep(module, parent):
             "(%s)-[:comes-from]->(%s)", name, previous.properties["name"]
         )
 
-
         map_filename_from_module(module, parent)
         map_functions_from_module(module, parent)
         map_classes_from_module(module, parent)
@@ -104,7 +102,12 @@ def main():
     )
 
     parser.add_argument(
-        "-p",
+        "--address",
+        default="0.0.0.0",
+        help="Address to bind to."
+    )
+
+    parser.add_argument(
         "--port",
         default=8000,
         type=int,
@@ -141,8 +144,12 @@ def main():
 
     logging.info("Vertices: %d", len(GRAPH.vertices))
     logging.info("Edges: %d", len(GRAPH.edges))
-
-    run("0.0.0.0", ns.port, False, GRAPH)
+    logging.info("Modules: %d", len(GRAPH.get_vertices("module")))
+    logging.info("Classes: %d", len(GRAPH.get_vertices("class")))
+    logging.info("Methods: %d", len(GRAPH.get_vertices("method")))
+    logging.info("Function: %d", len(GRAPH.get_vertices("function")))
+    logging.info("Files: %d", len(GRAPH.get_vertices("file")))
+    run(ns.address, ns.port, False, GRAPH)
 
 
 if __name__ == "__main__":
