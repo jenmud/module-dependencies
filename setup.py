@@ -3,7 +3,7 @@ import os.path
 from setuptools import setup, find_packages
 
 setup(
-    name="mod_dep",
+    name="funnel-web",
     version="1.0.0",
     author="Jenda Mudron",
     author_email="jenmud@gmail.com",
@@ -30,7 +30,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'gmd = mod_dep.__main__:main'
+            'funnel-web = mod_dep.__main__:main'
         ]
     },
 )
