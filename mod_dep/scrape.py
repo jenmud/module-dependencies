@@ -17,78 +17,102 @@ GRAPH.add_vertex_constraint("module", "name")
 SEEN = set()
 
 
-def map_filename_from_module(obj, parent):
-    try:
-        filename = inspect.getsourcefile(obj)
-        if filename:
-            parent_file = GRAPH.get_or_create_vertex("file", name=filename)
-            GRAPH.get_or_create_edge(parent, "found-in", parent_file)
-            logging.debug("(%s)-[:found-in]->(%s)", filename, obj.__name__)
-    except TypeError:
-        logging.warn("Failed to get the file for %s", obj.__name__)
+def map_filename(obj, parent):
+    filename = inspect.getsourcefile(obj)
+    if filename:
+        node = GRAPH.get_or_create_vertex("file", name=filename)
+        GRAPH.get_or_create_edge(parent, "found-in", node)
 
-
-def map_functions_from_module(obj, parent):
-    # get all the functions in the module
-    for fname, func in inspect.getmembers(obj, inspect.isfunction):
-        fnode = GRAPH.get_or_create_vertex("function", name=fname)
-        GRAPH.get_or_create_edge(parent, "has-function", fnode)
-
-
-def map_classes_from_module(obj, parent):
-    # get all the classes in the module
-    for cname, cls in inspect.getmembers(obj, inspect.isclass):
-        cnode = GRAPH.get_or_create_vertex("class", name=cname)
-        GRAPH.get_or_create_edge(parent, "has-class", cnode)
-        last = cnode
-        for name in inspect.getmro(cls):
-            node = GRAPH.get_or_create_vertex("class", name=name.__name__)
-            GRAPH.get_or_create_edge(last, "subclasses", node)
-            last = node
-
-        try:
-            # get all the class methods in the class
-            for mname, meth in inspect.getmembers(cls, inspect.ismethod):
-                mnode = GRAPH.get_or_create_vertex("method", name=mname)
-                GRAPH.get_or_create_edge(cnode, "has-method", mnode)
-        except ImportError:
-            logging.exception("Skipping due to an import error")
-
-
-def build_dep(obj, parent):
-    previous = parent
-
-    for name, module in inspect.getmembers(obj, inspect.ismodule):
-
-        # avoid loops
-        if module in SEEN:
-            continue
-
-        SEEN.add(module)
-
-        parent = GRAPH.get_or_create_vertex("module", name=name)
-
-        # link to the previous parent
-        GRAPH.get_or_create_edge(parent, "comes-from", previous)
         logging.debug(
-            "(%s)-[:comes-from]->(%s)", name, previous.properties["name"]
+            "(%s)-[:found-in]->(%s)",
+            parent.properties["name"],
+            filename,
         )
 
-        map_filename_from_module(obj, parent)
-        map_functions_from_module(obj, parent)
-        map_classes_from_module(obj, parent)
-        build_dep(obj, parent)
+
+def map_functions(obj, parent):
+    # get all the functions in the module
+    for name, obj in inspect.getmembers(obj, inspect.isfunction):
+        node = GRAPH.get_or_create_vertex("function", name=name)
+        GRAPH.get_or_create_edge(parent, "has-function", node)
+
+        logging.debug(
+            "(%s)-[:has-function]->(%s)",
+            parent.properties["name"],
+            name,
+        )
+
+
+def map_method(obj, parent):
+    try:
+        for name, obj in inspect.getmembers(obj, inspect.ismethod):
+            node = GRAPH.get_or_create_vertex("method", name=name)
+            GRAPH.get_or_create_edge(parent, "has-method", node)
+
+            logging.debug(
+                "(%s)-[:has-method]->(%s)",
+                parent.properties["name"],
+                name
+            )
+
+    except ImportError:
+        logging.error("Could not import %s", obj.__name__)
+
+
+def map_classes(obj, parent):
+    for name, obj in inspect.getmembers(obj, inspect.isclass):
+        node = GRAPH.get_or_create_vertex("class", name=name)
+        GRAPH.get_or_create_edge(parent, "has-class", node)
+
+        logging.debug(
+            "(%s)-[:has-class]->(%s)",
+            parent.properties["name"],
+            name
+        )
+
+        map_method(obj, node)
+
+        last = node
+        for name in inspect.getmro(obj)[1:]:
+            node = GRAPH.get_or_create_vertex("class", name=name.__name__)
+            GRAPH.get_or_create_edge(last, "subclasses", node)
+
+            logging.debug(
+                "(%s)-[:subclasses]->(%s)",
+                parent.properties["name"],
+                name
+            )
+
+            last = node
+            map_method(obj, node)
+
+
+def map_modules(obj, parent):
+    # get all the functions in the module
+    for name, obj in inspect.getmembers(obj, inspect.ismodule):
+        _id = id(obj) + id(parent)
+        if _id in SEEN:
+            continue
+        SEEN.add(_id)
+        node = GRAPH.get_or_create_vertex("module", name=name)
+        GRAPH.get_or_create_edge(parent, "imports", node)
+
+        logging.debug(
+            "(%s)-[:imports]->(%s)",
+            parent.properties["name"],
+            name
+        )
+
+        map_classes(obj, node)
+        map_functions(obj, node)
+        map_modules(obj, node)
 
 
 def scrape(obj):
     logging.info("Scrapping %r", obj)
-    try:
-        build_dep(
-            obj,
-            GRAPH.get_or_create_vertex("module", name=obj.__name__)
-        )
-    except Exception:
-        logging.exception("Hmmm, seems like something went wrong !")
+    parent = GRAPH.get_or_create_vertex("module", name=obj.__name__)
+    map_modules(obj, parent)
+    map_functions(obj, parent)
 
 
 def main():
