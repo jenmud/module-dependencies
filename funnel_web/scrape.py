@@ -1,8 +1,12 @@
 """
 Find all interesting information for a given installed module.
 """
+import functools
+import importlib
 import inspect
 import logging
+import os
+import pkgutil
 from ruruki.graphs import Graph
 from ruruki_eye.server import run
 
@@ -25,6 +29,23 @@ GRAPH.add_vertex_constraint("function", "name")
 GRAPH.add_vertex_constraint("module", "name")
 
 SEEN = set()
+
+
+def import_error_decorator(func):
+    """
+    Function decorator that will catch import errors and log them.
+
+    :param func: Function that you are decorating and should take an obj
+        as the first parameter.
+    :type func: callbable
+    """
+    @functools.wraps(func)
+    def inner(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except ImportError as err:
+            logging.error("Could not import %s", args[0].__name__)
+    return inner
 
 
 def map_filename(obj, parent):
@@ -51,6 +72,7 @@ def map_filename(obj, parent):
         logging.debug("Could not find file for: %s", obj.__name__)
 
 
+@import_error_decorator
 def map_functions(obj, parent):
     """
     Find and map all the functions recursively.
@@ -72,6 +94,7 @@ def map_functions(obj, parent):
         )
 
 
+@import_error_decorator
 def map_method(obj, parent):
     """
     Find and map all the methods recursively.
@@ -81,22 +104,18 @@ def map_method(obj, parent):
     :param parent: Parent node which you are searching in.
     :type parent: :class:`ruruki.interfaces.IVertex`
     """
-    try:
-        for name, obj in inspect.getmembers(obj, inspect.ismethod):
-            node = GRAPH.get_or_create_vertex("method", name=name)
-            GRAPH.get_or_create_edge(parent, "has-method", node)
-            map_filename(obj, node)
+    for name, obj in inspect.getmembers(obj, inspect.ismethod):
+        node = GRAPH.get_or_create_vertex("method", name=name)
+        GRAPH.get_or_create_edge(parent, "has-method", node)
 
-            logging.debug(
-                "(%s)-[:has-method]->(%s)",
-                parent.properties["name"],
-                name
-            )
-
-    except ImportError:
-        logging.error("Could not import %s", obj.__name__)
+        logging.debug(
+            "(%s)-[:has-method]->(%s)",
+            parent.properties["name"],
+            name
+        )
 
 
+@import_error_decorator
 def map_classes(obj, parent):
     """
     Find and map all the classes and the methods for the class recursively.
@@ -119,11 +138,15 @@ def map_classes(obj, parent):
 
         map_method(obj, node)
 
-        last = node
         for name in inspect.getmro(obj)[1:]:
-            node = GRAPH.get_or_create_vertex("class", name=name.__name__)
-            GRAPH.get_or_create_edge(last, "subclasses", node)
-            map_filename(obj, node)
+            sub_node = GRAPH.get_or_create_vertex(
+                "class",
+                name=name.__name__
+            )
+
+            GRAPH.get_or_create_edge(node, "subclasses", sub_node)
+
+            map_filename(obj, sub_node)
 
             logging.debug(
                 "(%s)-[:subclasses]->(%s)",
@@ -131,10 +154,10 @@ def map_classes(obj, parent):
                 name
             )
 
-            last = node
-            map_method(obj, node)
+            map_method(name, sub_node)
 
 
+@import_error_decorator
 def map_modules(obj, parent):
     """
     Find and map all the modules recursively.
@@ -165,6 +188,16 @@ def map_modules(obj, parent):
         map_modules(obj, node)
 
 
+def scrape_module(obj):
+        logging.info("Scrapping %r", obj.__name__)
+        parent = GRAPH.get_or_create_vertex("module", name=obj.__name__)
+        map_filename(obj, parent)
+        map_modules(obj, parent)
+        map_functions(obj, parent)
+        return parent
+
+
+@import_error_decorator
 def scrape(module):
     """
     Start scrapping interesting information about a module.
@@ -172,19 +205,16 @@ def scrape(module):
     :param module: Module that you are scrapping.
     :type module: :types:`ModuleType`
     """
-    logging.info("Scrapping %r", module)
-    parent = GRAPH.get_or_create_vertex("module", name=module.__name__)
-    map_filename(module, parent)
-    map_modules(module, parent)
-    map_functions(module, parent)
+    parent = scrape_module(module)
+    module_dirname = os.path.dirname(inspect.getsourcefile(module))
+    modules = [
+        importlib.import_module("{}.{}".format(module.__name__, name))
+        for _, name, isPkg in pkgutil.iter_modules([module_dirname])
+        if isPkg is True
+    ]
 
-    logging.info("Vertices: %d", len(GRAPH.vertices))
-    logging.info("Edges: %d", len(GRAPH.edges))
-    logging.info("Modules: %d", len(GRAPH.get_vertices("module")))
-    logging.info("Classes: %d", len(GRAPH.get_vertices("class")))
-    logging.info("Methods: %d", len(GRAPH.get_vertices("method")))
-    logging.info("Function: %d", len(GRAPH.get_vertices("function")))
-    logging.info("Files: %d", len(GRAPH.get_vertices("file")))
+    for module in modules:
+        scrape(module)
 
 
 def run_server(address="0.0.0.0", port=8000):
@@ -196,4 +226,12 @@ def run_server(address="0.0.0.0", port=8000):
     :param port: Port number to listen on.
     :type port: :class:`int`
     """
+    logging.info("Vertices: %d", len(GRAPH.vertices))
+    logging.info("Edges: %d", len(GRAPH.edges))
+    logging.info("Modules: %d", len(GRAPH.get_vertices("module")))
+    logging.info("Classes: %d", len(GRAPH.get_vertices("class")))
+    logging.info("Methods: %d", len(GRAPH.get_vertices("method")))
+    logging.info("Function: %d", len(GRAPH.get_vertices("function")))
+    logging.info("Files: %d", len(GRAPH.get_vertices("file")))
+
     run(address, port, False, GRAPH)
