@@ -13,13 +13,16 @@ from ruruki_eye.server import run
 
 __all__ = [
     "scrape",
+    "scrape_pkg",
     "map_filename",
     "map_functions",
     "map_method",
     "map_classes",
     "map_modules",
     "run_server",
+    "EXCLUDES"
 ]
+
 
 GRAPH = Graph()
 GRAPH.add_vertex_constraint("class", "name")
@@ -27,9 +30,64 @@ GRAPH.add_vertex_constraint("method", "name")
 GRAPH.add_vertex_constraint("file", "name")
 GRAPH.add_vertex_constraint("function", "name")
 GRAPH.add_vertex_constraint("module", "name")
-GRAPH.add_vertex_constraint("package", "name")
 
+EXCLUDES = []
 SEEN = set()
+
+
+def _skip(name, excludes=None):
+    """
+    Skip over names that match any of the given regex expressions.
+
+    :param name: Name that you are applying regex against.
+    :type name: :class:`str`
+    :param excludes: Regular expressions to apply against ``name``. If omitted,
+        then defaults will be applied.
+    :type excludes: Iterable of :class:`re.SRE_Pattern` or :obj:`None`
+    :returns: True if the ``name`` was matched by one of the regular
+        expressions.
+    :rtype: :class:`bool`
+    """
+    if excludes is None:
+        excludes = EXCLUDES
+
+    for exclude in excludes:
+        if exclude.search(name):
+            logging.info(
+                "%r match exclude %r, skipping...",
+                name,
+                exclude.pattern
+            )
+            return True
+    return False
+
+
+def should_skip(excludes=None):
+    """
+    Decorate a function checking if the object name should be skipped.
+
+    This decorator expects that the first argument of the function is an
+    object with a ``__name__`` attribute.
+
+    :param excludes: Regular expressions to apply against ``name``. If omitted,
+        then defaults will be applied.
+    :type excludes: Iterable of :class:`re.SRE_Pattern` or :obj:`None`
+    """
+    def decorator(func):
+        """
+        Outer function.
+        """
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            """
+            Wraping of the actual function you are decorating.
+            """
+            name = args[0].__name__
+            if _skip(name, excludes):
+                return
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 def import_error_decorator(func):
@@ -41,12 +99,15 @@ def import_error_decorator(func):
     :type func: callbable
     """
     @functools.wraps(func)
-    def inner(*args, **kwargs):
+    def wrapper(*args, **kwargs):
+        """
+        Wraping of the actual function you are decorating.
+        """
         try:
             return func(*args, **kwargs)
-        except ImportError as err:
-            logging.error("Could not import %s", args[0].__name__)
-    return inner
+        except ImportError:
+            logging.exception("Could not import %s", args[0].__name__)
+    return wrapper
 
 
 def catch_all_errors_decorator(func):
@@ -58,12 +119,15 @@ def catch_all_errors_decorator(func):
     :type func: callbable
     """
     @functools.wraps(func)
-    def inner(*args, **kwargs):
+    def wrapper(*args, **kwargs):
+        """
+        Wraping of the actual function you are decorating.
+        """
         try:
             return func(*args, **kwargs)
-        except Exception as err:
-            logging.debug("Hmmm something went wrong here: %s", err)
-    return inner
+        except Exception:  # pylint: disable=broad-except
+            logging.exception("Hmmm something went wrong here")
+    return wrapper
 
 
 @catch_all_errors_decorator
@@ -76,15 +140,21 @@ def map_filename(obj, parent):
     :param parent: Parent node which you are searching in.
     :type parent: :class:`ruruki.interfaces.IVertex`
     """
-    filename = inspect.getsourcefile(obj)
-    if filename:
-        node = GRAPH.get_or_create_vertex("file", name=filename)
-        GRAPH.get_or_create_edge(parent, "found-in", node)
+    try:
+        filename = inspect.getsourcefile(obj)
+        if filename:
+            node = GRAPH.get_or_create_vertex("file", name=filename)
+            GRAPH.get_or_create_edge(parent, "found-in", node)
 
+            logging.debug(
+                "(%s)-[:found-in]->(%s)",
+                parent.properties["name"],
+                filename,
+            )
+    except TypeError:
         logging.debug(
-            "(%s)-[:found-in]->(%s)",
-            parent.properties["name"],
-            filename,
+            "Buildin %r does not have a file, skipping",
+            obj.__name__
         )
 
 
@@ -173,6 +243,7 @@ def map_classes(obj, parent):
             map_method(name, sub_node)
 
 
+@should_skip()
 @import_error_decorator
 def map_modules(obj, parent):
     """
@@ -184,12 +255,15 @@ def map_modules(obj, parent):
     :type parent: :class:`ruruki.interfaces.IVertex`
     """
     # get all the functions in the module
-    for name, obj in inspect.getmembers(obj, inspect.ismodule):
+    for _, obj in inspect.getmembers(obj, inspect.ismodule):
+
         _id = id(obj) + id(parent)
         if _id in SEEN:
             continue
         SEEN.add(_id)
+
         node = GRAPH.get_or_create_vertex("module", name=obj.__name__)
+        node.set_property(abstract=inspect.isabstract(obj))
         GRAPH.get_or_create_edge(parent, "imports", node)
         map_filename(obj, node)
 
@@ -199,36 +273,61 @@ def map_modules(obj, parent):
             obj.__name__
         )
 
+
         map_classes(obj, node)
         map_functions(obj, node)
         map_modules(obj, node)
 
 
+@should_skip()
 @catch_all_errors_decorator
 @import_error_decorator
 def scrape_pkg(pkg):
+    """
+    Srape a package for interesting information..
+
+    :param pkg: Package that you are scrapping.
+    :type pkg: :types:`ModuleType`
+    :param excludes: Skip over names that match the given regular expressions.
+    :type excludes: Iterable of :class:`re.SRE_Pattern`
+    """
     module_dirname = os.path.dirname(inspect.getsourcefile(pkg))
     pkg_node = GRAPH.get_or_create_vertex("module", name=pkg.__name__)
     scrape(pkg)
-    for _, name, isPkg in pkgutil.iter_modules([module_dirname]):
+
+    for _, name, is_pkg in pkgutil.iter_modules([module_dirname]):
         full_name = "{}.{}".format(pkg.__name__, name)
-        m = importlib.import_module(full_name)
+
+        # because of this extra inner create, we need to add in a skip/exclude
+        # check here.
+        if _skip(full_name) or _skip(name):
+            continue
+
+        logging.debug("Importing %s", full_name)
+        module = importlib.import_module(full_name)
         node = GRAPH.get_or_create_vertex("module", name=full_name)
         GRAPH.get_or_create_edge(pkg_node, "contains", node)
-        if isPkg is True:
-            scrape_pkg(m)
-        scrape(m)
+
+        logging.debug(
+            "(%s)-[:contains]->(%s)",
+            pkg_node.properties["name"],
+            node.properties["name"]
+        )
+
+        if is_pkg is True:
+            scrape_pkg(module)
+        scrape(module)
 
 
+@should_skip()
 @import_error_decorator
 def scrape(module):
     """
-    Start scrapping interesting information about a module.
+    Srape a module for interesting information..
 
     :param module: Module that you are scrapping.
     :type module: :types:`ModuleType`
     """
-    logging.info("Scrapping %r", module.__name__)
     parent = GRAPH.get_or_create_vertex("module", name=module.__name__)
     map_filename(module, parent)
     map_modules(module, parent)
@@ -254,3 +353,19 @@ def run_server(address="0.0.0.0", port=8000):
     logging.info("Files: %d", len(GRAPH.get_vertices("file")))
 
     run(address, port, False, GRAPH)
+
+
+def dump(filename):
+    """
+    Dump the graph to a file on disk.
+
+    .. note::
+
+        Dump will overwrite existing filenames.
+
+    :param filename: Filename to dumpt the file.
+    :type filename: :class:`str`
+    """
+    logging.info("Dumping graph to %s", filename)
+    with open(filename, "w") as file_handler:
+        GRAPH.dump(file_handler)
