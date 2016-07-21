@@ -26,6 +26,7 @@ INFO:werkzeug: * Running on http://0.0.0.0:8000/ (Press CTRL+C to quit)
 $ funnel-web --help
 usage: funnel-web [-h] [--address ADDRESS] [--port PORT]
                   [--level {info,warn,error,debug}] [--logfile LOGFILE]
+                  [--dump DUMP] [--exclude REGEX]
                   module
 
 Generate an indepth directed dependency graph for a given module.
@@ -40,6 +41,9 @@ optional arguments:
   --level {info,warn,error,debug}
                         Logging level.
   --logfile LOGFILE     Send logs to a file. Default is to log to stdout.
+  --dump DUMP           Dump the graph to a file.
+  --exclude REGEX       Exclude/skip over modules or packages who name match
+                        the exclude regex
 ```
 
 ![Screenshot](/funnel-web.png)

@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="funnel-web",
-    version="1.0.0",
+    version="2.0.0",
     author="Jenda Mudron",
     author_email="jenmud@gmail.com",
     maintainer="Jenda Mudron",
