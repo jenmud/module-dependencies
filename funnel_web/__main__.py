@@ -4,7 +4,7 @@ Scrapping from command line.
 import argparse
 import importlib
 import logging
-from funnel_web.scrape import scrape, run_server
+from funnel_web.scrape import scrape_pkg, run_server
 
 
 def main():
@@ -63,5 +63,5 @@ def main():
         level=levels.get(ns.level, logging.INFO)
     )
 
-    scrape(ns.module)
+    scrape_pkg(ns.module)
     run_server(ns.address, ns.port)

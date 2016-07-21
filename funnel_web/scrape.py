@@ -27,6 +27,7 @@ GRAPH.add_vertex_constraint("method", "name")
 GRAPH.add_vertex_constraint("file", "name")
 GRAPH.add_vertex_constraint("function", "name")
 GRAPH.add_vertex_constraint("module", "name")
+GRAPH.add_vertex_constraint("package", "name")
 
 SEEN = set()
 
@@ -48,6 +49,24 @@ def import_error_decorator(func):
     return inner
 
 
+def catch_all_errors_decorator(func):
+    """
+    Function decorator that will catch all types of exceptions and log them.
+
+    :param func: Function that you are decorating and should take an obj
+        as the first parameter.
+    :type func: callbable
+    """
+    @functools.wraps(func)
+    def inner(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as err:
+            logging.debug("Hmmm something went wrong here: %s", err)
+    return inner
+
+
+@catch_all_errors_decorator
 def map_filename(obj, parent):
     """
     Find and map all the file names that the obj comes from.
@@ -57,19 +76,16 @@ def map_filename(obj, parent):
     :param parent: Parent node which you are searching in.
     :type parent: :class:`ruruki.interfaces.IVertex`
     """
-    try:
-        filename = inspect.getsourcefile(obj)
-        if filename:
-            node = GRAPH.get_or_create_vertex("file", name=filename)
-            GRAPH.get_or_create_edge(parent, "found-in", node)
+    filename = inspect.getsourcefile(obj)
+    if filename:
+        node = GRAPH.get_or_create_vertex("file", name=filename)
+        GRAPH.get_or_create_edge(parent, "found-in", node)
 
-            logging.debug(
-                "(%s)-[:found-in]->(%s)",
-                parent.properties["name"],
-                filename,
-            )
-    except TypeError:
-        logging.debug("Could not find file for: %s", obj.__name__)
+        logging.debug(
+            "(%s)-[:found-in]->(%s)",
+            parent.properties["name"],
+            filename,
+        )
 
 
 @import_error_decorator
@@ -173,14 +189,14 @@ def map_modules(obj, parent):
         if _id in SEEN:
             continue
         SEEN.add(_id)
-        node = GRAPH.get_or_create_vertex("module", name=name)
+        node = GRAPH.get_or_create_vertex("module", name=obj.__name__)
         GRAPH.get_or_create_edge(parent, "imports", node)
         map_filename(obj, node)
 
         logging.debug(
             "(%s)-[:imports]->(%s)",
             parent.properties["name"],
-            name
+            obj.__name__
         )
 
         map_classes(obj, node)
@@ -188,13 +204,20 @@ def map_modules(obj, parent):
         map_modules(obj, node)
 
 
-def scrape_module(obj):
-        logging.info("Scrapping %r", obj.__name__)
-        parent = GRAPH.get_or_create_vertex("module", name=obj.__name__)
-        map_filename(obj, parent)
-        map_modules(obj, parent)
-        map_functions(obj, parent)
-        return parent
+@catch_all_errors_decorator
+@import_error_decorator
+def scrape_pkg(pkg):
+    module_dirname = os.path.dirname(inspect.getsourcefile(pkg))
+    pkg_node = GRAPH.get_or_create_vertex("module", name=pkg.__name__)
+    scrape(pkg)
+    for _, name, isPkg in pkgutil.iter_modules([module_dirname]):
+        full_name = "{}.{}".format(pkg.__name__, name)
+        m = importlib.import_module(full_name)
+        node = GRAPH.get_or_create_vertex("module", name=full_name)
+        GRAPH.get_or_create_edge(pkg_node, "contains", node)
+        if isPkg is True:
+            scrape_pkg(m)
+        scrape(m)
 
 
 @import_error_decorator
@@ -205,16 +228,12 @@ def scrape(module):
     :param module: Module that you are scrapping.
     :type module: :types:`ModuleType`
     """
-    parent = scrape_module(module)
-    module_dirname = os.path.dirname(inspect.getsourcefile(module))
-    modules = [
-        importlib.import_module("{}.{}".format(module.__name__, name))
-        for _, name, isPkg in pkgutil.iter_modules([module_dirname])
-        if isPkg is True
-    ]
+    logging.info("Scrapping %r", module.__name__)
+    parent = GRAPH.get_or_create_vertex("module", name=module.__name__)
+    map_filename(module, parent)
+    map_modules(module, parent)
+    map_functions(module, parent)
 
-    for module in modules:
-        scrape(module)
 
 
 def run_server(address="0.0.0.0", port=8000):
