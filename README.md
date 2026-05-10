@@ -1,5 +1,3 @@
-[![GitLab](https://img.shields.io/badge/Hosted%20on-GitLab-orange?logo=gitlab)](https://gitlab.com/jenmud/module-dependencies)
-
 # Modules indepth directed dependency graph 
 Generate a indepth directed dependency graph for a module.
 
